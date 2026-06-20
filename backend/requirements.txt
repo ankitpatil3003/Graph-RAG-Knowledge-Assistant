@@ -1,0 +1,32 @@
+# Core
+fastapi
+uvicorn[standard]
+pydantic-settings
+python-dotenv
+python-multipart
+
+# LLM Providers
+openai
+google-genai
+langchain-openai
+langchain-google-genai
+langchain-core
+
+# Graph & RAG
+langgraph
+neo4j
+langchain-neo4j
+langchain-text-splitters
+
+# Observability
+langfuse
+
+# Evaluation
+ragas
+datasets
+
+# Storage
+supabase
+
+# Utilities
+httpx
