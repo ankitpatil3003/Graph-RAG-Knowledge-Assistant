@@ -21,9 +21,7 @@ langchain-text-splitters
 # Observability
 langfuse
 
-# Evaluation
-ragas
-datasets
+# Evaluation (LLM-as-judge, no extra deps)
 
 # Storage
 supabase

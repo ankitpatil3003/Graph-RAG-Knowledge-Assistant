@@ -133,6 +133,26 @@ async def get_graph(limit: int = Query(100, le=500)):
     return {"nodes": nodes, "edges": edges}
 
 
+@router.post("/evaluate")
+async def run_evaluation(
+    strategy: str = Query(None, enum=["fixed", "semantic", "late"]),
+):
+    """Run RAGAS evaluation. Pass strategy for single, omit for all 3."""
+    from app.evaluation.ragas_eval import run_eval_for_strategy, run_full_evaluation
+
+    try:
+        if strategy:
+            result = await run_eval_for_strategy(strategy)
+        else:
+            result = await run_full_evaluation()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return result
+
+
 @router.get("/provider")
 async def provider_info():
     """Return current LLM provider details."""

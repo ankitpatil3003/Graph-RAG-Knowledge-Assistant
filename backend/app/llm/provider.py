@@ -67,6 +67,26 @@ def _build_openrouter(settings) -> BaseChatModel:
     )
 
 
+def get_eval_llm() -> BaseChatModel:
+    """Return a higher-quota LLM for evaluation (gemini-2.0-flash: 15 RPM, 1500 RPD)."""
+    settings = get_settings()
+
+    if settings.has_openai:
+        return _build_openai(settings)
+
+    if settings.llm_fallback_provider == "gemini" and settings.gemini_api_key:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        logger.info("Using Gemini eval model: gemini-2.0-flash")
+        return ChatGoogleGenerativeAI(
+            model="gemini-2.0-flash",
+            google_api_key=settings.gemini_api_key,
+            temperature=0,
+        )
+
+    return _build_openrouter(settings)
+
+
 def get_provider_info() -> dict:
     """Return metadata about the active LLM provider."""
     settings = get_settings()
