@@ -73,16 +73,19 @@ async def retrieve_graph_context(state: RAGState) -> RAGState:
 
     subgraph = []
     async with get_session() as session:
-        # 1. Direct entity match + 2-hop neighborhood
+        # 1. Direct entity match + 2-hop neighborhood with properties
         for entity in state["entities"]:
             name = entity.get("name", "")
             result = await session.run(
                 """
                 MATCH (n)
-                WHERE toLower(n.name) CONTAINS toLower($name)
+                WHERE NOT n:Chunk AND NOT n:Document
+                  AND toLower(n.name) CONTAINS toLower($name)
                 OPTIONAL MATCH (n)-[r]-(m)
+                WHERE NOT m:Chunk AND NOT m:Document
                 RETURN n.name AS source, type(r) AS rel, m.name AS target,
-                       labels(n) AS source_labels, labels(m) AS target_labels
+                       labels(n) AS source_labels, labels(m) AS target_labels,
+                       properties(n) AS source_props, properties(m) AS target_props
                 LIMIT 30
                 """,
                 name=name,
@@ -101,10 +104,13 @@ async def retrieve_graph_context(state: RAGState) -> RAGState:
                 result = await session.run(
                     """
                     MATCH (n)
-                    WHERE toLower(n.name) CONTAINS $keyword
+                    WHERE NOT n:Chunk AND NOT n:Document
+                      AND toLower(n.name) CONTAINS $keyword
                     OPTIONAL MATCH (n)-[r]-(m)
+                    WHERE NOT m:Chunk AND NOT m:Document
                     RETURN n.name AS source, type(r) AS rel, m.name AS target,
-                           labels(n) AS source_labels, labels(m) AS target_labels
+                           labels(n) AS source_labels, labels(m) AS target_labels,
+                           properties(n) AS source_props, properties(m) AS target_props
                     LIMIT 20
                     """,
                     keyword=kw,
@@ -187,18 +193,45 @@ async def generate_answer(state: RAGState) -> RAGState:
 
     context_parts = []
 
+    def _fmt_props(props: dict) -> str:
+        """Format entity properties, excluding 'name' to avoid redundancy."""
+        return ", ".join(
+            f"{k}={v}" for k, v in props.items()
+            if k != "name" and v
+        )
+
     if state["subgraph"]:
-        # Format graph triples readably
+        # Format graph triples readably, including entity properties
         triples = []
         for item in state["subgraph"]:
             src = item.get("source", "?")
             rel = item.get("rel", "?")
             tgt = item.get("target", "?")
+            src_props = item.get("source_props", {})
+            tgt_props = item.get("target_props", {})
+
             if tgt:
-                triples.append(f"  {src} --[{rel}]--> {tgt}")
+                line = f"  {src} --[{rel}]--> {tgt}"
+                prop_parts = []
+                if src_props:
+                    p = _fmt_props(src_props)
+                    if p:
+                        prop_parts.append(f"[{src}: {p}]")
+                if tgt_props:
+                    p = _fmt_props(tgt_props)
+                    if p:
+                        prop_parts.append(f"[{tgt}: {p}]")
+                if prop_parts:
+                    line += "  " + " ".join(prop_parts)
+                triples.append(line)
             else:
                 labels = item.get("source_labels", [])
-                triples.append(f"  {src} ({', '.join(labels) if labels else 'entity'})")
+                line = f"  {src} ({', '.join(labels) if labels else 'entity'})"
+                if src_props:
+                    p = _fmt_props(src_props)
+                    if p:
+                        line += f"  [{p}]"
+                triples.append(line)
         context_parts.append("Knowledge Graph:\n" + "\n".join(triples))
 
     if state["chunks"]:

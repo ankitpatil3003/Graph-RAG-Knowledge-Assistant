@@ -1,5 +1,10 @@
 """API routes for the Graph RAG Knowledge Assistant."""
 
+import asyncio
+import logging
+import uuid
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, HTTPException, UploadFile, File, Query
 from pydantic import BaseModel
 from app.rag.workflow import rag_graph
@@ -7,7 +12,29 @@ from app.llm.provider import get_provider_info
 from app.graph.neo4j_client import health_check as neo4j_health
 from app.observability.langfuse_client import get_langfuse
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# ---------------------------------------------------------------------------
+# In-memory ingestion job store
+# ---------------------------------------------------------------------------
+
+_ingestion_jobs: dict[str, dict] = {}
+
+
+async def _run_ingestion_job(
+    job_id: str, content: bytes, filename: str, strategy: str
+) -> None:
+    """Background coroutine that runs the ingestion pipeline for one file."""
+    from app.ingestion.pipeline import ingest_pdf
+
+    _ingestion_jobs[job_id]["status"] = "processing"
+    try:
+        result = await ingest_pdf(content, filename, chunking_strategy=strategy)
+        _ingestion_jobs[job_id].update(status="completed", result=result)
+    except Exception as e:
+        logger.exception("Ingestion failed for %s", filename)
+        _ingestion_jobs[job_id].update(status="failed", error=str(e))
 
 
 class QueryRequest(BaseModel):
@@ -65,24 +92,54 @@ async def health():
 
 @router.post("/ingest")
 async def ingest(
-    file: UploadFile = File(...),
+    files: list[UploadFile] = File(...),
     strategy: str = Query("fixed", enum=["fixed", "semantic", "late"]),
 ):
-    """Upload a PDF filing and ingest it into the knowledge graph."""
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    """Upload one or more PDF filings and ingest them as background tasks.
 
-    from app.ingestion.pipeline import ingest_pdf
+    Returns a list of job descriptors immediately. Poll GET /ingest/status/{job_id}
+    for progress.
+    """
+    jobs = []
+    for file in files:
+        if not file.filename or not file.filename.lower().endswith(".pdf"):
+            jobs.append({"filename": file.filename, "error": "Not a PDF"})
+            continue
 
-    content = await file.read()
-    try:
-        result = await ingest_pdf(content, file.filename, chunking_strategy=strategy)
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        content = await file.read()
+        job_id = str(uuid.uuid4())
+        _ingestion_jobs[job_id] = {
+            "job_id": job_id,
+            "filename": file.filename,
+            "status": "queued",
+            "submitted_at": datetime.now(timezone.utc).isoformat(),
+            "result": None,
+            "error": None,
+        }
+        asyncio.create_task(_run_ingestion_job(job_id, content, file.filename, strategy))
+        jobs.append({"job_id": job_id, "filename": file.filename, "status": "queued"})
 
-    return result
+    return {"jobs": jobs}
+
+
+@router.get("/ingest/status/{job_id}")
+async def ingest_status(job_id: str):
+    """Poll the status of a single ingestion job."""
+    job = _ingestion_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@router.get("/ingest/jobs")
+async def ingest_jobs():
+    """List all ingestion jobs (most recent first)."""
+    sorted_jobs = sorted(
+        _ingestion_jobs.values(),
+        key=lambda j: j.get("submitted_at", ""),
+        reverse=True,
+    )
+    return {"jobs": sorted_jobs}
 
 
 @router.get("/graph")
