@@ -60,16 +60,19 @@ export function FileUpload({ onIngested }: FileUploadProps) {
     <div className="space-y-3">
       {/* Strategy selector */}
       <div className="flex items-center gap-2 text-sm">
-        <label className="text-gray-500">Chunking:</label>
+        <label className="text-xs" style={{ color: "var(--text-muted)" }}>
+          Chunking:
+        </label>
         {(["fixed", "semantic", "late"] as const).map((s) => (
           <button
             key={s}
             onClick={() => setStrategy(s)}
-            className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
-              strategy === s
-                ? "bg-blue-100 text-blue-700"
-                : "bg-gray-100 text-gray-500 hover:bg-gray-200"
-            }`}
+            className="px-2.5 py-1 rounded-md text-xs font-medium transition-all duration-200"
+            style={{
+              background: strategy === s ? "var(--accent-dim)" : "var(--bg-tertiary)",
+              color: strategy === s ? "var(--accent)" : "var(--text-muted)",
+              border: strategy === s ? "1px solid var(--accent)" : "1px solid transparent",
+            }}
           >
             {s}
           </button>
@@ -84,26 +87,29 @@ export function FileUpload({ onIngested }: FileUploadProps) {
         }}
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
-        className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
-          dragOver
-            ? "border-blue-400 bg-blue-50"
-            : "border-gray-300 hover:border-gray-400"
-        }`}
+        className="border border-dashed rounded-xl p-5 text-center cursor-pointer transition-all duration-200"
+        style={{
+          borderColor: dragOver ? "var(--accent)" : "var(--border)",
+          background: dragOver ? "var(--accent-dim)" : "transparent",
+        }}
       >
         {uploading ? (
           <div className="space-y-2">
-            <div className="animate-spin mx-auto w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full" />
-            <p className="text-sm text-gray-500">
+            <div
+              className="animate-spin mx-auto w-5 h-5 border-2 border-t-transparent rounded-full"
+              style={{ borderColor: "var(--accent)", borderTopColor: "transparent" }}
+            />
+            <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
               Parsing, extracting entities, building graph...
             </p>
           </div>
         ) : (
           <label className="cursor-pointer">
-            <p className="text-sm text-gray-500">
+            <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
               Drop a PDF here or{" "}
-              <span className="text-blue-600 underline">browse</span>
+              <span style={{ color: "var(--accent)" }}>browse</span>
             </p>
-            <p className="text-xs text-gray-400 mt-1">
+            <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
               Financial filings (10-K, 10-Q, annual reports)
             </p>
             <input
@@ -118,9 +124,17 @@ export function FileUpload({ onIngested }: FileUploadProps) {
 
       {/* Result */}
       {result && (
-        <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm">
-          <p className="font-medium text-green-800">Ingested: {result.filename}</p>
-          <div className="mt-1 text-green-700 grid grid-cols-2 gap-x-4 text-xs">
+        <div
+          className="rounded-lg p-3 text-xs border animate-fade-in"
+          style={{
+            background: "rgba(34, 197, 94, 0.08)",
+            borderColor: "rgba(34, 197, 94, 0.2)",
+          }}
+        >
+          <p className="font-medium" style={{ color: "var(--success)" }}>
+            Ingested: {result.filename}
+          </p>
+          <div className="mt-1 grid grid-cols-2 gap-x-4" style={{ color: "rgba(34, 197, 94, 0.7)" }}>
             <span>{result.pages} pages</span>
             <span>{result.chunks} chunks ({result.chunking_strategy})</span>
             <span>{result.entities} entities</span>
@@ -131,7 +145,14 @@ export function FileUpload({ onIngested }: FileUploadProps) {
 
       {/* Error */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+        <div
+          className="rounded-lg p-3 text-xs border"
+          style={{
+            background: "rgba(239, 68, 68, 0.08)",
+            borderColor: "rgba(239, 68, 68, 0.2)",
+            color: "var(--error)",
+          }}
+        >
           {error}
         </div>
       )}

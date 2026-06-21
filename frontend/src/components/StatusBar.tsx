@@ -14,7 +14,7 @@ export function StatusBar() {
 
   if (!health) {
     return (
-      <div className="mt-4 text-xs text-gray-400">
+      <div className="mt-4 text-xs" style={{ color: "var(--text-muted)" }}>
         Backend not connected
       </div>
     );
@@ -23,9 +23,14 @@ export function StatusBar() {
   const { services } = health;
 
   return (
-    <div className="mt-4 space-y-2 text-xs">
-      <h3 className="font-medium text-gray-500">Services</h3>
-      <div className="space-y-1">
+    <div className="mt-auto pt-4 space-y-3">
+      <h3
+        className="text-xs font-medium uppercase tracking-wider"
+        style={{ color: "var(--text-muted)" }}
+      >
+        Services
+      </h3>
+      <div className="space-y-2">
         <StatusDot label="Neo4j" status={services.neo4j} />
         <StatusDot label="Langfuse" status={services.langfuse} />
         <StatusDot
@@ -33,10 +38,21 @@ export function StatusBar() {
           status="connected"
         />
       </div>
-      <p className="text-gray-400">
-        Model: {services.llm.model}
-        {services.llm.is_free_tier && " — free tier"}
-      </p>
+      <div
+        className="rounded-lg p-2.5 text-xs border"
+        style={{ background: "var(--bg-tertiary)", borderColor: "var(--border-subtle)" }}
+      >
+        <span style={{ color: "var(--text-muted)" }}>Model: </span>
+        <span style={{ color: "var(--text-primary)" }}>{services.llm.model}</span>
+        {services.llm.is_free_tier && (
+          <span
+            className="ml-2 px-1.5 py-0.5 rounded text-xs"
+            style={{ background: "var(--accent-dim)", color: "var(--accent)" }}
+          >
+            free
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -44,12 +60,13 @@ export function StatusBar() {
 function StatusDot({ label, status }: { label: string; status: string }) {
   const isOk = status === "connected";
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 text-xs">
       <span
-        className={`w-2 h-2 rounded-full ${isOk ? "bg-green-500" : "bg-yellow-500"}`}
+        className="w-1.5 h-1.5 rounded-full"
+        style={{ background: isOk ? "var(--success)" : "var(--warning)" }}
       />
-      <span className="text-gray-600">{label}</span>
-      <span className="text-gray-400">{status}</span>
+      <span style={{ color: "var(--text-secondary)" }}>{label}</span>
+      <span style={{ color: "var(--text-muted)" }}>{status}</span>
     </div>
   );
 }

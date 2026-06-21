@@ -3,17 +3,16 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { getGraph, GraphData, GraphNode, GraphEdge } from "@/lib/api";
 
-// Color map for node types
 const TYPE_COLORS: Record<string, string> = {
-  COMPANY: "#3b82f6",
-  PERSON: "#8b5cf6",
-  METRIC: "#10b981",
+  COMPANY: "#6366f1",
+  PERSON: "#a78bfa",
+  METRIC: "#22c55e",
   DATE: "#f59e0b",
   LOCATION: "#ef4444",
   PRODUCT: "#06b6d4",
   REGULATION: "#ec4899",
-  Document: "#6b7280",
-  Unknown: "#9ca3af",
+  Document: "#4b5563",
+  Unknown: "#6b7280",
 };
 
 interface SimNode extends GraphNode {
@@ -33,6 +32,12 @@ export function GraphVisualization() {
   const edgesRef = useRef<GraphEdge[]>([]);
   const animRef = useRef<number>(0);
 
+  // Zoom & pan state
+  const scaleRef = useRef(1);
+  const panRef = useRef({ x: 0, y: 0 });
+  const draggingRef = useRef(false);
+  const lastMouseRef = useRef({ x: 0, y: 0 });
+
   const fetchGraph = useCallback(async () => {
     try {
       setLoading(true);
@@ -40,15 +45,16 @@ export function GraphVisualization() {
       setGraphData(data);
       setError(null);
 
-      // Initialize positions
       nodesRef.current = data.nodes.map((n, i) => ({
         ...n,
         x: 200 + Math.cos((i / data.nodes.length) * Math.PI * 2) * 120,
-        y: 150 + Math.sin((i / data.nodes.length) * Math.PI * 2) * 100,
+        y: 175 + Math.sin((i / data.nodes.length) * Math.PI * 2) * 100,
         vx: 0,
         vy: 0,
       }));
       edgesRef.current = data.edges;
+      scaleRef.current = 1;
+      panRef.current = { x: 0, y: 0 };
     } catch {
       setError("Could not load graph");
     } finally {
@@ -60,7 +66,7 @@ export function GraphVisualization() {
     fetchGraph();
   }, [fetchGraph]);
 
-  // Simple force simulation + render loop
+  // Force simulation + render
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !graphData || graphData.nodes.length === 0) return;
@@ -72,11 +78,10 @@ export function GraphVisualization() {
     const H = canvas.height;
     const nodes = nodesRef.current;
     const edges = edgesRef.current;
-
     const nodeMap = new Map(nodes.map((n) => [n.id, n]));
 
     function tick() {
-      // Repulsion between nodes
+      // Repulsion
       for (let i = 0; i < nodes.length; i++) {
         for (let j = i + 1; j < nodes.length; j++) {
           const dx = nodes[j].x - nodes[i].x;
@@ -92,7 +97,7 @@ export function GraphVisualization() {
         }
       }
 
-      // Attraction along edges
+      // Attraction
       for (const edge of edges) {
         const a = nodeMap.get(edge.source);
         const b = nodeMap.get(edge.target);
@@ -109,7 +114,7 @@ export function GraphVisualization() {
         b.vy -= fy;
       }
 
-      // Center gravity
+      // Center gravity + damping
       for (const node of nodes) {
         node.vx += (W / 2 - node.x) * 0.001;
         node.vy += (H / 2 - node.y) * 0.001;
@@ -117,17 +122,20 @@ export function GraphVisualization() {
         node.vy *= 0.9;
         node.x += node.vx;
         node.y += node.vy;
-        // Clamp
         node.x = Math.max(20, Math.min(W - 20, node.x));
         node.y = Math.max(20, Math.min(H - 20, node.y));
       }
 
       // Draw
-      ctx.clearRect(0, 0, W, H);
+      const scale = scaleRef.current;
+      const pan = panRef.current;
 
-      // Edges
-      ctx.strokeStyle = "#d1d5db";
-      ctx.lineWidth = 1;
+      ctx.clearRect(0, 0, W, H);
+      ctx.save();
+      ctx.translate(pan.x, pan.y);
+      ctx.scale(scale, scale);
+
+      // Edges with glow
       for (const edge of edges) {
         const a = nodeMap.get(edge.source);
         const b = nodeMap.get(edge.target);
@@ -135,49 +143,65 @@ export function GraphVisualization() {
         ctx.beginPath();
         ctx.moveTo(a.x, a.y);
         ctx.lineTo(b.x, b.y);
+        ctx.strokeStyle = "rgba(99, 102, 241, 0.15)";
+        ctx.lineWidth = 1;
         ctx.stroke();
       }
 
       // Nodes
       for (const node of nodes) {
         const color = TYPE_COLORS[node.type] || TYPE_COLORS.Unknown;
-        const radius = node.type === "Document" ? 8 : 6;
+        const isHovered = hoveredNode?.id === node.id;
+        const radius = node.type === "Document" ? 7 : isHovered ? 7 : 5;
+
+        // Glow for hovered
+        if (isHovered) {
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, radius + 4, 0, Math.PI * 2);
+          ctx.fillStyle = color + "30";
+          ctx.fill();
+        }
 
         ctx.beginPath();
         ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
-        ctx.strokeStyle = "#fff";
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
 
         // Label
-        ctx.fillStyle = "#374151";
-        ctx.font = "9px system-ui";
+        ctx.fillStyle = "rgba(232, 232, 240, 0.6)";
+        ctx.font = "8px system-ui";
         ctx.textAlign = "center";
         const label =
-          node.label.length > 15
-            ? node.label.slice(0, 14) + "…"
-            : node.label;
-        ctx.fillText(label, node.x, node.y + radius + 12);
+          node.label.length > 15 ? node.label.slice(0, 14) + "…" : node.label;
+        ctx.fillText(label, node.x, node.y + radius + 11);
       }
 
+      ctx.restore();
       animRef.current = requestAnimationFrame(tick);
     }
 
     animRef.current = requestAnimationFrame(tick);
-
     return () => cancelAnimationFrame(animRef.current);
-  }, [graphData]);
+  }, [graphData, hoveredNode]);
 
-  // Hover detection
+  // Hover
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
-      const mx = e.clientX - rect.left;
-      const my = e.clientY - rect.top;
+      const scale = scaleRef.current;
+      const pan = panRef.current;
+      const mx = (e.clientX - rect.left - pan.x) / scale;
+      const my = (e.clientY - rect.top - pan.y) / scale;
+
+      if (draggingRef.current) {
+        const dx = e.clientX - lastMouseRef.current.x;
+        const dy = e.clientY - lastMouseRef.current.y;
+        panRef.current = { x: pan.x + dx, y: pan.y + dy };
+        lastMouseRef.current = { x: e.clientX, y: e.clientY };
+        return;
+      }
 
       const found = nodesRef.current.find((n) => {
         const dx = n.x - mx;
@@ -189,9 +213,33 @@ export function GraphVisualization() {
     []
   );
 
+  // Zoom with wheel
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    scaleRef.current = Math.max(0.3, Math.min(3, scaleRef.current * delta));
+  }, []);
+
+  // Pan with drag
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    draggingRef.current = true;
+    lastMouseRef.current = { x: e.clientX, y: e.clientY };
+  }, []);
+
+  const handleMouseUp = useCallback(() => {
+    draggingRef.current = false;
+  }, []);
+
   if (loading) {
     return (
-      <div className="h-64 flex items-center justify-center text-sm text-gray-400">
+      <div
+        className="h-64 flex items-center justify-center text-xs"
+        style={{ color: "var(--text-muted)" }}
+      >
+        <div
+          className="animate-spin w-5 h-5 border-2 border-t-transparent rounded-full mr-2"
+          style={{ borderColor: "var(--accent)", borderTopColor: "transparent" }}
+        />
         Loading graph...
       </div>
     );
@@ -199,9 +247,12 @@ export function GraphVisualization() {
 
   if (error || !graphData || graphData.nodes.length === 0) {
     return (
-      <div className="h-64 flex flex-col items-center justify-center text-sm text-gray-400 gap-2">
+      <div
+        className="h-64 flex flex-col items-center justify-center text-xs gap-2"
+        style={{ color: "var(--text-muted)" }}
+      >
         <p>{error || "No entities in graph yet"}</p>
-        <p className="text-xs">Upload a PDF to populate the knowledge graph</p>
+        <p>Upload a PDF to populate the knowledge graph</p>
       </div>
     );
   }
@@ -209,40 +260,59 @@ export function GraphVisualization() {
   return (
     <div className="space-y-2">
       <div className="flex justify-between items-center">
-        <span className="text-xs text-gray-500">
-          {graphData.nodes.length} nodes · {graphData.edges.length} edges
+        <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+          {graphData.nodes.length} nodes &middot; {graphData.edges.length} edges
         </span>
-        <button
-          onClick={fetchGraph}
-          className="text-xs text-blue-600 hover:underline"
-        >
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+            scroll to zoom
+          </span>
+          <button
+            onClick={fetchGraph}
+            className="text-xs px-2 py-1 rounded-md transition-colors"
+            style={{ color: "var(--accent)", background: "var(--accent-dim)" }}
+          >
+            Refresh
+          </button>
+        </div>
       </div>
 
       <canvas
         ref={canvasRef}
         width={400}
-        height={300}
+        height={350}
         onMouseMove={handleMouseMove}
-        className="w-full rounded-lg border bg-white cursor-crosshair"
-        style={{ height: "300px" }}
+        onWheel={handleWheel}
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        className="w-full rounded-xl border cursor-grab active:cursor-grabbing"
+        style={{
+          height: "350px",
+          background: "var(--bg-tertiary)",
+          borderColor: "var(--border-subtle)",
+        }}
       />
 
       {/* Tooltip */}
       {hoveredNode && (
-        <div className="bg-gray-800 text-white text-xs rounded p-2">
-          <p className="font-medium">{hoveredNode.label}</p>
-          <p className="text-gray-300">{hoveredNode.type}</p>
+        <div
+          className="rounded-lg p-2.5 text-xs border animate-fade-in"
+          style={{ background: "var(--bg-card)", borderColor: "var(--border)" }}
+        >
+          <p className="font-medium" style={{ color: "var(--text-primary)" }}>
+            {hoveredNode.label}
+          </p>
+          <p style={{ color: "var(--text-muted)" }}>{hoveredNode.type}</p>
         </div>
       )}
 
       {/* Legend */}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
         {Object.entries(TYPE_COLORS)
           .filter(([type]) => type !== "Unknown")
           .map(([type, color]) => (
-            <div key={type} className="flex items-center gap-1 text-xs text-gray-500">
+            <div key={type} className="flex items-center gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
               <span
                 className="w-2 h-2 rounded-full inline-block"
                 style={{ backgroundColor: color }}
