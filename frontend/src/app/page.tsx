@@ -1,10 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { ChatPanel } from "@/components/ChatPanel";
+import { FileUpload } from "@/components/FileUpload";
+import { GraphVisualization } from "@/components/GraphVisualization";
 import { StatusBar } from "@/components/StatusBar";
 
 export default function Home() {
+  const [graphKey, setGraphKey] = useState(0);
+
+  const refreshGraph = useCallback(() => {
+    setGraphKey((k) => k + 1);
+  }, []);
+
   return (
     <main className="min-h-screen flex flex-col">
       <header className="border-b bg-white px-6 py-4">
@@ -15,19 +23,21 @@ export default function Home() {
       </header>
 
       <div className="flex-1 flex">
-        {/* Main chat area */}
+        {/* Main area */}
         <div className="flex-1 flex flex-col">
+          {/* Upload bar */}
+          <div className="border-b bg-white px-6 py-4">
+            <FileUpload onIngested={refreshGraph} />
+          </div>
+
+          {/* Chat */}
           <ChatPanel />
         </div>
 
-        {/* Sidebar — graph visualization placeholder */}
-        <aside className="w-80 border-l bg-white p-4 hidden lg:block">
-          <h2 className="font-medium text-sm text-gray-500 mb-3">
-            Knowledge Graph
-          </h2>
-          <div className="h-64 bg-gray-100 rounded-lg flex items-center justify-center text-sm text-gray-400">
-            Graph visualization
-          </div>
+        {/* Sidebar */}
+        <aside className="w-96 border-l bg-white p-4 hidden lg:flex flex-col gap-4 overflow-y-auto">
+          <h2 className="font-medium text-sm text-gray-500">Knowledge Graph</h2>
+          <GraphVisualization key={graphKey} />
           <StatusBar />
         </aside>
       </div>

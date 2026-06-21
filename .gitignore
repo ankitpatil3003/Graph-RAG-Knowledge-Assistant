@@ -228,3 +228,5 @@ backend/.env
 
 # Environment
 /env
+/backend/.env
+/Neo4j-d0a6bfcb-Created-2026-06-20.txt

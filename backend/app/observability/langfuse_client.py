@@ -30,22 +30,14 @@ def get_langfuse() -> Langfuse | None:
     return _langfuse
 
 
-def get_langfuse_callback(**kwargs) -> CallbackHandler | None:
-    """Return a LangChain callback handler for Langfuse tracing.
-
-    Pass trace metadata via kwargs: trace_name, user_id, session_id, etc.
-    """
+def get_langfuse_callback() -> CallbackHandler | None:
+    """Return a LangChain callback handler for Langfuse tracing."""
     settings = get_settings()
 
     if not settings.langfuse_public_key:
         return None
 
-    return CallbackHandler(
-        public_key=settings.langfuse_public_key,
-        secret_key=settings.langfuse_secret_key,
-        host=settings.langfuse_host,
-        **kwargs,
-    )
+    return CallbackHandler()
 
 
 def flush():

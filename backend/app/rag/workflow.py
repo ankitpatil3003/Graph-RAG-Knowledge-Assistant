@@ -1,10 +1,14 @@
 """LangGraph RAG workflow with graph-based retrieval."""
 
-from typing import TypedDict, Annotated
+import json
+import logging
+from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage
 from app.llm.provider import get_llm
 from app.observability.langfuse_client import get_langfuse_callback
+
+logger = logging.getLogger(__name__)
 
 
 # --- State ---
@@ -12,9 +16,9 @@ from app.observability.langfuse_client import get_langfuse_callback
 
 class RAGState(TypedDict):
     query: str
-    entities: list[dict]  # Extracted entities from query
-    subgraph: list[dict]  # Retrieved graph context (nodes + relationships)
-    chunks: list[str]  # Retrieved text chunks
+    entities: list[dict]
+    subgraph: list[dict]
+    chunks: list[str]
     answer: str
     trace_id: str | None
 
@@ -23,47 +27,136 @@ class RAGState(TypedDict):
 
 
 async def extract_entities(state: RAGState) -> RAGState:
-    """Use LLM to extract entities from the user query for graph lookup."""
+    """Use LLM to extract entity names from the user query for graph lookup."""
     llm = get_llm()
     prompt = (
-        "Extract key entities (companies, people, financial metrics, dates) "
-        "from this query. Return as JSON list of {name, type} objects.\n\n"
-        f"Query: {state['query']}"
+        "Extract key entity names from this query that could match nodes in a knowledge graph "
+        "about financial filings. Return ONLY a JSON array of strings — just the names.\n"
+        "Example: [\"Apple Inc.\", \"Q4 2024\", \"revenue\"]\n\n"
+        f"Query: {state['query']}\n\nJSON array:"
     )
     response = await llm.ainvoke([HumanMessage(content=prompt)])
-    # TODO: parse structured output from LLM response
-    state["entities"] = []  # placeholder
+
+    # Parse the response
+    raw = response.content.strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+
+    try:
+        names = json.loads(raw)
+        if isinstance(names, list):
+            state["entities"] = [{"name": n} for n in names if isinstance(n, str)]
+        else:
+            state["entities"] = []
+    except json.JSONDecodeError:
+        logger.warning("Could not parse entity extraction: %s", raw[:200])
+        state["entities"] = []
+
+    logger.info("Extracted query entities: %s", [e["name"] for e in state["entities"]])
     return state
 
 
 async def retrieve_graph_context(state: RAGState) -> RAGState:
-    """Traverse Neo4j graph using extracted entities for multi-hop retrieval."""
+    """Traverse Neo4j graph using extracted entities + keyword search."""
     from app.graph.neo4j_client import get_session
 
     subgraph = []
     async with get_session() as session:
+        # 1. Direct entity match + 2-hop neighborhood
         for entity in state["entities"]:
-            # Multi-hop: find entity and its 2-hop neighborhood
+            name = entity.get("name", "")
             result = await session.run(
                 """
-                MATCH (n)-[r*1..2]-(m)
-                WHERE n.name = $name
-                RETURN n, r, m LIMIT 50
+                MATCH (n)
+                WHERE toLower(n.name) CONTAINS toLower($name)
+                OPTIONAL MATCH (n)-[r]-(m)
+                RETURN n.name AS source, type(r) AS rel, m.name AS target,
+                       labels(n) AS source_labels, labels(m) AS target_labels
+                LIMIT 30
                 """,
-                name=entity.get("name", ""),
+                name=name,
             )
-            records = [record.data() async for record in result]
-            subgraph.extend(records)
+            async for record in result:
+                data = record.data()
+                if data.get("source"):
+                    subgraph.append(data)
 
-    state["subgraph"] = subgraph
+        # 2. If no entity matches, do a broad keyword search on the query
+        if not subgraph:
+            keywords = state["query"].lower().split()
+            for kw in keywords[:5]:
+                if len(kw) < 3:
+                    continue
+                result = await session.run(
+                    """
+                    MATCH (n)
+                    WHERE toLower(n.name) CONTAINS $keyword
+                    OPTIONAL MATCH (n)-[r]-(m)
+                    RETURN n.name AS source, type(r) AS rel, m.name AS target,
+                           labels(n) AS source_labels, labels(m) AS target_labels
+                    LIMIT 20
+                    """,
+                    keyword=kw,
+                )
+                async for record in result:
+                    data = record.data()
+                    if data.get("source"):
+                        subgraph.append(data)
+
+    # Deduplicate
+    seen = set()
+    unique = []
+    for item in subgraph:
+        key = (item.get("source"), item.get("rel"), item.get("target"))
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+
+    state["subgraph"] = unique[:50]
+    logger.info("Retrieved %d graph triples", len(state["subgraph"]))
     return state
 
 
 async def retrieve_chunks(state: RAGState) -> RAGState:
-    """Retrieve relevant text chunks (vector similarity or keyword)."""
-    # TODO: implement chunking strategy (fixed / semantic / late chunking)
-    # This will query Supabase pgvector or Neo4j vector index
-    state["chunks"] = []
+    """Retrieve relevant text chunks using keyword matching on stored Chunk nodes."""
+    from app.graph.neo4j_client import get_session
+
+    chunks = []
+    keywords = state["query"].lower().split()
+    # Use the longer keywords for matching
+    search_terms = [kw for kw in keywords if len(kw) >= 3]
+
+    if not search_terms:
+        state["chunks"] = []
+        return state
+
+    async with get_session() as session:
+        # Search chunks that contain any of the query keywords
+        for term in search_terms[:5]:
+            result = await session.run(
+                """
+                MATCH (c:Chunk)-[:CHUNK_OF]->(d:Document)
+                WHERE toLower(c.text) CONTAINS $term
+                RETURN c.text AS text, d.filename AS source, c.index AS idx
+                LIMIT 5
+                """,
+                term=term,
+            )
+            async for record in result:
+                chunks.append(record.data())
+
+    # Deduplicate by text content
+    seen = set()
+    unique_chunks = []
+    for c in chunks:
+        if c["text"] not in seen:
+            seen.add(c["text"])
+            unique_chunks.append(c)
+
+    state["chunks"] = [
+        f"[{c.get('source', 'unknown')}] {c['text']}" for c in unique_chunks[:5]
+    ]
+    logger.info("Retrieved %d chunks", len(state["chunks"]))
     return state
 
 
@@ -72,22 +165,36 @@ async def generate_answer(state: RAGState) -> RAGState:
     llm = get_llm()
 
     context_parts = []
+
     if state["subgraph"]:
-        context_parts.append(f"Graph context:\n{state['subgraph']}")
+        # Format graph triples readably
+        triples = []
+        for item in state["subgraph"]:
+            src = item.get("source", "?")
+            rel = item.get("rel", "?")
+            tgt = item.get("target", "?")
+            if tgt:
+                triples.append(f"  {src} --[{rel}]--> {tgt}")
+            else:
+                labels = item.get("source_labels", [])
+                triples.append(f"  {src} ({', '.join(labels) if labels else 'entity'})")
+        context_parts.append("Knowledge Graph:\n" + "\n".join(triples))
+
     if state["chunks"]:
-        context_parts.append(f"Document chunks:\n{chr(10).join(state['chunks'])}")
+        context_parts.append("Document Excerpts:\n" + "\n---\n".join(state["chunks"]))
 
     context = "\n\n".join(context_parts) if context_parts else "No context found."
 
     prompt = (
-        f"Answer the following question using the provided context.\n\n"
+        "You are a financial analyst assistant. Answer the question using ONLY the provided context. "
+        "If the context doesn't contain enough information, say so.\n\n"
         f"Context:\n{context}\n\n"
         f"Question: {state['query']}\n\n"
-        f"Answer:"
+        "Answer:"
     )
 
     callbacks = []
-    cb = get_langfuse_callback(trace_name="rag_generate", trace_id=state.get("trace_id"))
+    cb = get_langfuse_callback()
     if cb:
         callbacks.append(cb)
 
@@ -120,5 +227,4 @@ def build_rag_workflow() -> StateGraph:
     return workflow.compile()
 
 
-# Compiled graph — importable
 rag_graph = build_rag_workflow()
