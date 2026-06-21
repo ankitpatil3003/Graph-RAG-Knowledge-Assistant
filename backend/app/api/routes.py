@@ -153,6 +153,21 @@ async def run_evaluation(
     return result
 
 
+@router.post("/benchmark")
+async def run_benchmark():
+    """Run graph-vs-dense retrieval benchmark."""
+    from app.evaluation.benchmark import run_benchmark as _run_benchmark
+
+    try:
+        result = await _run_benchmark()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return result
+
+
 @router.get("/provider")
 async def provider_info():
     """Return current LLM provider details."""

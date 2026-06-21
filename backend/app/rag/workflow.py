@@ -6,9 +6,18 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import HumanMessage
 from app.llm.provider import get_llm
-from app.observability.langfuse_client import get_langfuse_callback
+from app.observability.langfuse_client import get_langfuse, get_langfuse_callback
 
 logger = logging.getLogger(__name__)
+
+
+def _trace_span(name: str, metadata: dict | None = None):
+    """Create a Langfuse span for non-LLM operations (retrieval, etc.)."""
+    lf = get_langfuse()
+    if lf is None:
+        return None
+    trace = lf.trace(name=name, metadata=metadata or {})
+    return trace
 
 
 # --- State ---
@@ -59,6 +68,8 @@ async def extract_entities(state: RAGState) -> RAGState:
 async def retrieve_graph_context(state: RAGState) -> RAGState:
     """Traverse Neo4j graph using extracted entities + keyword search."""
     from app.graph.neo4j_client import get_session
+
+    trace = _trace_span("retrieve_graph", {"query": state["query"], "entities": [e.get("name") for e in state["entities"]]})
 
     subgraph = []
     async with get_session() as session:
@@ -114,12 +125,18 @@ async def retrieve_graph_context(state: RAGState) -> RAGState:
 
     state["subgraph"] = unique[:50]
     logger.info("Retrieved %d graph triples", len(state["subgraph"]))
+
+    if trace:
+        trace.update(output={"triples_count": len(state["subgraph"])})
+
     return state
 
 
 async def retrieve_chunks(state: RAGState) -> RAGState:
     """Retrieve relevant text chunks using keyword matching on stored Chunk nodes."""
     from app.graph.neo4j_client import get_session
+
+    trace = _trace_span("retrieve_chunks", {"query": state["query"]})
 
     chunks = []
     keywords = state["query"].lower().split()
@@ -157,6 +174,10 @@ async def retrieve_chunks(state: RAGState) -> RAGState:
         f"[{c.get('source', 'unknown')}] {c['text']}" for c in unique_chunks[:5]
     ]
     logger.info("Retrieved %d chunks", len(state["chunks"]))
+
+    if trace:
+        trace.update(output={"chunks_count": len(state["chunks"])})
+
     return state
 
 

@@ -3,8 +3,10 @@
 import { useState } from "react";
 import {
   runEvaluation,
+  runBenchmark,
   EvalFullResult,
   EvalStrategyResult,
+  BenchmarkResult,
 } from "@/lib/api";
 
 const METRIC_LABELS: Record<string, string> = {
@@ -24,6 +26,10 @@ export function EvalDashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [benchResult, setBenchResult] = useState<BenchmarkResult | null>(null);
+  const [benchLoading, setBenchLoading] = useState(false);
+  const [benchError, setBenchError] = useState<string | null>(null);
+
   async function handleRunAll() {
     setLoading(true);
     setError(null);
@@ -38,8 +44,76 @@ export function EvalDashboard() {
     }
   }
 
+  async function handleBenchmark() {
+    setBenchLoading(true);
+    setBenchError(null);
+    setBenchResult(null);
+    try {
+      const res = await runBenchmark();
+      setBenchResult(res);
+    } catch (err) {
+      setBenchError(err instanceof Error ? err.message : "Benchmark failed");
+    } finally {
+      setBenchLoading(false);
+    }
+  }
+
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-8 animate-fade-in">
+      {/* Benchmark Section */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
+              Graph vs Dense Retrieval
+            </h2>
+            <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+              Compares multi-hop graph-enhanced retrieval against chunk-only (dense) retrieval.
+            </p>
+          </div>
+          <button
+            onClick={handleBenchmark}
+            disabled={benchLoading}
+            className="px-5 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 disabled:opacity-40"
+            style={{ background: "var(--cyan, #06b6d4)", color: "#fff" }}
+          >
+            {benchLoading ? "Running..." : "Run Benchmark"}
+          </button>
+        </div>
+
+        {benchLoading && (
+          <div
+            className="rounded-xl p-5 border"
+            style={{ background: "rgba(6, 182, 212, 0.05)", borderColor: "rgba(6, 182, 212, 0.15)" }}
+          >
+            <div className="flex items-center gap-3">
+              <div
+                className="animate-spin w-5 h-5 border-2 border-t-transparent rounded-full"
+                style={{ borderColor: "var(--cyan)", borderTopColor: "transparent" }}
+              />
+              <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+                Running {15} queries through both retrieval paths...
+              </p>
+            </div>
+          </div>
+        )}
+
+        {benchError && (
+          <div
+            className="rounded-xl p-4 text-sm border"
+            style={{ background: "rgba(239, 68, 68, 0.05)", borderColor: "rgba(239, 68, 68, 0.15)", color: "var(--error)" }}
+          >
+            {benchError}
+          </div>
+        )}
+
+        {benchResult && <BenchmarkResults data={benchResult} />}
+      </div>
+
+      {/* Divider */}
+      <div style={{ borderTop: "1px solid var(--border)" }} />
+
+      {/* Chunking Eval Section */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
@@ -238,6 +312,113 @@ function EvalResults({ data }: { data: EvalFullResult }) {
       <p className="text-xs text-center" style={{ color: "var(--text-muted)" }}>
         Evaluated {strategies[0]?.num_questions || 0} questions per strategy
       </p>
+    </div>
+  );
+}
+
+function BenchmarkResults({ data }: { data: BenchmarkResult }) {
+  const [showDetails, setShowDetails] = useState(false);
+  const improvementColor =
+    data.improvement_pct > 0 ? "var(--success)" : "var(--error)";
+
+  return (
+    <div className="space-y-4 animate-fade-in">
+      {/* Headline result */}
+      <div
+        className="rounded-xl p-6 border text-center"
+        style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
+      >
+        <p className="text-xs uppercase tracking-wider mb-2" style={{ color: "var(--text-muted)" }}>
+          Multi-hop Recall Improvement
+        </p>
+        <p className="text-4xl font-bold" style={{ color: improvementColor }}>
+          +{data.improvement_pct}%
+        </p>
+        <p className="text-xs mt-2" style={{ color: "var(--text-secondary)" }}>
+          Graph-enhanced vs dense-only retrieval across {data.num_questions} queries
+        </p>
+      </div>
+
+      {/* Side-by-side comparison */}
+      <div className="grid grid-cols-2 gap-4">
+        <div
+          className="rounded-xl p-4 border text-center"
+          style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
+        >
+          <p className="text-xs mb-1" style={{ color: "var(--text-muted)" }}>
+            Graph + Chunks
+          </p>
+          <p className="text-2xl font-bold" style={{ color: "var(--cyan, #06b6d4)" }}>
+            {(data.graph_enhanced.avg_recall * 100).toFixed(1)}%
+          </p>
+          <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>avg recall</p>
+        </div>
+        <div
+          className="rounded-xl p-4 border text-center"
+          style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
+        >
+          <p className="text-xs mb-1" style={{ color: "var(--text-muted)" }}>
+            Chunks Only
+          </p>
+          <p className="text-2xl font-bold" style={{ color: "var(--text-secondary)" }}>
+            {(data.dense_only.avg_recall * 100).toFixed(1)}%
+          </p>
+          <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>avg recall</p>
+        </div>
+      </div>
+
+      {/* Per-question details toggle */}
+      <button
+        onClick={() => setShowDetails(!showDetails)}
+        className="text-xs w-full text-center py-2 rounded-lg transition-colors"
+        style={{ color: "var(--accent)", background: "var(--accent-dim)" }}
+      >
+        {showDetails ? "Hide" : "Show"} per-question breakdown
+      </button>
+
+      {showDetails && (
+        <div
+          className="rounded-xl border overflow-hidden"
+          style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
+        >
+          <table className="w-full text-xs">
+            <thead>
+              <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                <th className="text-left px-4 py-2" style={{ color: "var(--text-muted)" }}>Question</th>
+                <th className="text-center px-3 py-2" style={{ color: "var(--cyan, #06b6d4)" }}>Graph</th>
+                <th className="text-center px-3 py-2" style={{ color: "var(--text-muted)" }}>Dense</th>
+                <th className="text-center px-3 py-2" style={{ color: "var(--text-muted)" }}>Diff</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.per_question.map((q, i) => (
+                <tr
+                  key={i}
+                  style={{
+                    borderBottom: i < data.per_question.length - 1 ? "1px solid var(--border-subtle)" : "none",
+                  }}
+                >
+                  <td className="px-4 py-2.5" style={{ color: "var(--text-secondary)", maxWidth: "250px" }}>
+                    {q.question.length > 60 ? q.question.slice(0, 58) + "..." : q.question}
+                  </td>
+                  <td className="text-center px-3" style={{ color: "var(--text-primary)" }}>
+                    {(q.graph_recall * 100).toFixed(0)}%
+                  </td>
+                  <td className="text-center px-3" style={{ color: "var(--text-secondary)" }}>
+                    {(q.dense_recall * 100).toFixed(0)}%
+                  </td>
+                  <td
+                    className="text-center px-3 font-medium"
+                    style={{ color: q.improvement > 0 ? "var(--success)" : q.improvement < 0 ? "var(--error)" : "var(--text-muted)" }}
+                  >
+                    {q.improvement > 0 ? "+" : ""}{(q.improvement * 100).toFixed(0)}%
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
